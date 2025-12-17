@@ -1,11 +1,14 @@
 package main
 
 import (
+	"crypto/md5"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,7 +23,6 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
-// 全局配置
 var (
 	appHost    string
 	runtimeDir = "./runtime"
@@ -32,10 +34,12 @@ var (
 // --- 数据模型 ---
 type Message struct {
 	ID        int64  `json:"id"`
+	SessionID string `json:"session_id"` // 新增：用于区分设备的唯一ID
 	Username  string `json:"username"`
 	Content   string `json:"content"`
 	UA        string `json:"ua"`
 	Referer   string `json:"referer"`
+	IPHash    string `json:"ip_hash"` // 新增：加密后的IP
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -86,20 +90,21 @@ func processAndSaveFile(filename string) {
 
 func initDB() {
 	var err error
-	fmt.Println("Opening Database at:", dbPath)
 	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 测试连接并创建表
+	// 更新表结构：增加了 session_id 和 ip_hash
 	query := `
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT,
         username TEXT,
         content TEXT,
         ua TEXT,
         referer TEXT,
+        ip_hash TEXT,
         created_at INTEGER
     );`
 	_, err = db.Exec(query)
@@ -108,7 +113,31 @@ func initDB() {
 	}
 }
 
-// --- HTTP Helpers ---
+// 辅助：获取客户端IP
+func getClientIP(r *http.Request) string {
+	// 1. 尝试从 X-Forwarded-For 获取 (Docker/Nginx 环境常用)
+	xForwardedFor := r.Header.Get("X-Forwarded-For")
+	if xForwardedFor != "" {
+		return strings.Split(xForwardedFor, ",")[0]
+	}
+	// 2. 尝试从 X-Real-IP 获取
+	xRealIP := r.Header.Get("X-Real-IP")
+	if xRealIP != "" {
+		return xRealIP
+	}
+	// 3. 直接获取 RemoteAddr (通常包含端口)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+// 辅助：Hash IP
+func hashIP(ip string) string {
+	hash := md5.Sum([]byte(ip + "salt_chat_2024")) // 加盐防止彩虹表
+	return hex.EncodeToString(hash[:])[:8]         // 只取前8位作为指纹
+}
 
 func enableCors(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Origin", "*")
@@ -153,7 +182,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		beforeID = b
 	}
 
-	query := "SELECT id, username, content, ua, referer, created_at FROM messages "
+	query := "SELECT id, session_id, username, content, ua, referer, ip_hash, created_at FROM messages "
 	dbLock.Lock()
 	var rows *sql.Rows
 	var err error
@@ -178,7 +207,8 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	var msgs []Message
 	for rows.Next() {
 		var m Message
-		rows.Scan(&m.ID, &m.Username, &m.Content, &m.UA, &m.Referer, &m.CreatedAt)
+		// Scan 必须包含所有字段
+		rows.Scan(&m.ID, &m.SessionID, &m.Username, &m.Content, &m.UA, &m.Referer, &m.IPHash, &m.CreatedAt)
 		msgs = append(msgs, m)
 	}
 	if afterID == 0 {
@@ -205,11 +235,16 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+
 	m.CreatedAt = time.Now().Unix()
 
+	// 处理 IP Hash
+	rawIP := getClientIP(r)
+	m.IPHash = hashIP(rawIP)
+
 	dbLock.Lock()
-	res, err := db.Exec("INSERT INTO messages (username, content, ua, referer, created_at) VALUES (?, ?, ?, ?, ?)",
-		m.Username, m.Content, m.UA, m.Referer, m.CreatedAt)
+	res, err := db.Exec("INSERT INTO messages (session_id, username, content, ua, referer, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		m.SessionID, m.Username, m.Content, m.UA, m.Referer, m.IPHash, m.CreatedAt)
 	dbLock.Unlock()
 
 	if err != nil {

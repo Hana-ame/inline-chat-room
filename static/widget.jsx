@@ -1,10 +1,31 @@
 // 指向 Go 服务器 API 地址
 const SERVER_URL = "__API_HOST__"; // Go服务器启动时会替换此值
 
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
-// --- Styles ---
+// 简单的 UUID 生成器
+const generateUUID = () => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    var r = (Math.random() * 16) | 0,
+      v = c == "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
+// =============================================================================
+// 1. 样式定义 (增强隔离)
+// =============================================================================
 const styles = {
+  // 基础重置，防止外部 CSS 污染
+  reset: {
+    boxSizing: "border-box",
+    lineHeight: "1.5",
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    fontSize: "14px",
+    color: "#333",
+    textAlign: "left",
+  },
   ball: {
     position: "fixed",
     width: "60px",
@@ -33,7 +54,6 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    fontFamily: "sans-serif",
     border: "1px solid #ddd",
   },
   windowMobile: {
@@ -46,17 +66,17 @@ const styles = {
     zIndex: 2147483646,
     display: "flex",
     flexDirection: "column",
-    fontFamily: "sans-serif",
   },
   header: {
     padding: "10px 15px",
     borderBottom: "1px solid #eee",
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
     alignItems: "center",
     backgroundColor: "#f8f9fa",
-    minHeight: "40px",
+    minHeight: "46px",
   },
+  title: { fontWeight: "bold", fontSize: "15px", color: "#333", margin: 0 },
   chatArea: {
     flex: 1,
     overflowY: "auto",
@@ -65,6 +85,7 @@ const styles = {
     flexDirection: "column",
     gap: "10px",
     scrollBehavior: "smooth",
+    backgroundColor: "#fff",
   },
   inputArea: {
     padding: "10px",
@@ -73,6 +94,31 @@ const styles = {
     gap: "8px",
     backgroundColor: "#fff",
     alignItems: "center",
+  },
+  // Input 和 Button 加上 !important 级别的样式或者是足够详细的样式以覆盖全局
+  inputReset: {
+    flex: 1,
+    padding: "10px 15px",
+    border: "1px solid #eee",
+    borderRadius: "20px",
+    outline: "none",
+    background: "#fff",
+    color: "#333",
+    fontSize: "14px",
+    margin: 0,
+    boxShadow: "none",
+    appearance: "none",
+  },
+  btnReset: {
+    padding: "0 20px",
+    height: "38px",
+    border: "none",
+    borderRadius: "20px",
+    fontWeight: "bold",
+    fontSize: "14px",
+    margin: 0,
+    cursor: "pointer",
+    boxShadow: "none",
   },
   msgBubble: {
     padding: "10px 14px",
@@ -103,28 +149,32 @@ const styles = {
     color: "#666",
     marginBottom: "2px",
     marginLeft: "4px",
+    cursor: "help",
   },
   tooltip: {
     position: "absolute",
     bottom: "100%",
     left: "0",
-    backgroundColor: "rgba(0,0,0,0.8)",
+    backgroundColor: "rgba(0,0,0,0.85)",
     color: "#fff",
-    padding: "6px",
-    borderRadius: "4px",
+    padding: "8px",
+    borderRadius: "6px",
     fontSize: "10px",
-    whiteSpace: "nowrap",
+    whiteSpace: "pre",
     display: "none",
-    zIndex: 10,
+    zIndex: 99999,
+    lineHeight: "1.4",
+    pointerEvents: "none",
   },
 };
 
-// --- Components ---
+// =============================================================================
+// 2. 组件
+// =============================================================================
 
 const LoginScreen = ({ onLogin }) => {
   const [name, setName] = useState("");
   const inputRef = useRef(null);
-
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
   }, []);
@@ -135,8 +185,9 @@ const LoginScreen = ({ onLogin }) => {
   };
 
   return (
-    <div style={styles.loginContainer}>
-      <h3>👋 欢迎</h3>
+    <div style={{ ...styles.loginContainer, ...styles.reset }}>
+      <h3 style={{ margin: 0, fontSize: "18px" }}>👋 欢迎</h3>
+      <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>请输入昵称</p>
       <input
         ref={inputRef}
         type="text"
@@ -145,24 +196,19 @@ const LoginScreen = ({ onLogin }) => {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
         style={{
-          padding: "10px",
+          ...styles.inputReset,
+          border: "1px solid #ccc",
           width: "80%",
-          border: "1px solid #ddd",
-          borderRadius: "6px",
-          outline: "none",
+          flex: "none",
           textAlign: "center",
         }}
       />
       <button
         onClick={handleSubmit}
         style={{
-          padding: "10px 30px",
-          cursor: "pointer",
+          ...styles.btnReset,
           backgroundColor: "#007bff",
           color: "white",
-          border: "none",
-          borderRadius: "20px",
-          fontWeight: "bold",
         }}
       >
         开始聊天
@@ -173,7 +219,7 @@ const LoginScreen = ({ onLogin }) => {
 
 const MessageList = ({
   messages,
-  currentUser,
+  currentSessionID,
   isMobile,
   onLoadHistory,
   loadingHistory,
@@ -184,14 +230,18 @@ const MessageList = ({
   };
 
   return (
-    <div style={styles.chatArea} onScroll={handleScroll}>
+    <div
+      style={{ ...styles.chatArea, ...styles.reset }}
+      onScroll={handleScroll}
+    >
       {loadingHistory && (
         <div style={{ textAlign: "center", fontSize: "12px", color: "#999" }}>
           加载历史...
         </div>
       )}
       {messages.map((m) => {
-        const isMe = m.username === currentUser;
+        // 【核心修改】使用 SessionID 判断是否是自己
+        const isMe = m.session_id === currentSessionID;
         return (
           <div
             key={m.id}
@@ -203,11 +253,7 @@ const MessageList = ({
           >
             {!isMe && (
               <div
-                style={{
-                  cursor: "help",
-                  position: "relative",
-                  marginLeft: "4px",
-                }}
+                style={{ position: "relative", marginLeft: "4px" }}
                 onMouseEnter={(e) => {
                   if (isMobile) return;
                   const tip = e.currentTarget.querySelector(".tooltip-box");
@@ -220,8 +266,16 @@ const MessageList = ({
               >
                 <span style={styles.usernameDisplay}>{m.username}</span>
                 <div className="tooltip-box" style={styles.tooltip}>
-                  <div>UA: {m.ua}</div>
-                  <div>Ref: {m.referer}</div>
+                  <div>ID: {m.ip_hash} (IP Hash)</div>
+                  <div
+                    style={{
+                      maxWidth: "150px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    UA: {m.ua}
+                  </div>
                 </div>
               </div>
             )}
@@ -248,17 +302,14 @@ const MessageInput = ({ onSend, isSending }) => {
     onSend(val);
     setVal("");
   };
+
+  const disabled = isSending || !val.trim();
+  const btnBg = disabled ? "#ccc" : "#007bff";
+
   return (
-    <div style={styles.inputArea}>
+    <div style={{ ...styles.inputArea, ...styles.reset }}>
       <input
-        style={{
-          flex: 1,
-          padding: "10px",
-          border: "1px solid #eee",
-          borderRadius: "20px",
-          outline: "none",
-          paddingLeft: "15px",
-        }}
+        style={styles.inputReset}
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => {
@@ -272,15 +323,12 @@ const MessageInput = ({ onSend, isSending }) => {
       />
       <button
         onClick={handleSend}
-        disabled={isSending || !val.trim()}
+        disabled={disabled}
         style={{
-          padding: "0 20px",
-          height: "38px",
-          backgroundColor: isSending || !val.trim() ? "#ccc" : "#007bff",
+          ...styles.btnReset,
+          backgroundColor: btnBg,
           color: "white",
-          border: "none",
-          borderRadius: "20px",
-          cursor: isSending || !val.trim() ? "not-allowed" : "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
           transition: "background-color 0.2s",
         }}
       >
@@ -300,21 +348,38 @@ const ChatApp = () => {
     y: window.innerHeight - 80,
   });
   const [isDragging, setIsDragging] = useState(false);
+
   const dragStartRef = useRef({ x: 0, y: 0 });
   const initialPosRef = useRef({ x: 0, y: 0 });
   const hasMovedRef = useRef(false);
 
+  // 用户状态
   const [username, setUsername] = useState(
     localStorage.getItem("chat_username") || ""
   );
   const [isLoggedIn, setIsLoggedIn] = useState(
     !!localStorage.getItem("chat_username")
   );
+
+  // Session 状态
+  const [sessionID, setSessionID] = useState("");
+
+  // 聊天数据
   const [messages, setMessages] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const poller = useRef(null);
+
+  // 初始化 Session ID
+  useEffect(() => {
+    let sid = localStorage.getItem("chat_session_id");
+    if (!sid) {
+      sid = generateUUID();
+      localStorage.setItem("chat_session_id", sid);
+    }
+    setSessionID(sid);
+  }, []);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -328,6 +393,7 @@ const ChatApp = () => {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
+  // 拖拽逻辑
   const handleDragStart = (cx, cy) => {
     setIsDragging(true);
     hasMovedRef.current = false;
@@ -435,6 +501,7 @@ const ChatApp = () => {
       await fetch(`${SERVER_URL}/api/send`, {
         method: "POST",
         body: JSON.stringify({
+          session_id: sessionID, // 发送 SessionID
           username,
           content,
           ua: navigator.userAgent,
@@ -450,7 +517,7 @@ const ChatApp = () => {
   };
 
   const getWindowStyle = () => {
-    if (isMobile) return styles.windowMobile;
+    if (isMobile) return { ...styles.windowMobile, ...styles.reset };
     const w = 350,
       h = 500,
       ball = 60,
@@ -459,14 +526,20 @@ const ChatApp = () => {
     let top = pos.y - h - gap;
     if (left < 0) left = pos.x;
     if (top < 0) top = pos.y + ball + gap;
-    return { ...styles.windowPC, left: left + "px", top: top + "px" };
+    return {
+      ...styles.windowPC,
+      ...styles.reset,
+      left: left + "px",
+      top: top + "px",
+    };
   };
 
   return (
     <>
       {isOpen && (
         <div style={getWindowStyle()}>
-          <div style={styles.header}>
+          <div style={{ ...styles.header, ...styles.reset }}>
+            <span style={styles.title}>群聊（测试版）</span>
             <span
               style={{
                 cursor: "pointer",
@@ -485,7 +558,7 @@ const ChatApp = () => {
             <>
               <MessageList
                 messages={messages}
-                currentUser={username}
+                currentSessionID={sessionID}
                 isMobile={isMobile}
                 onLoadHistory={handleLoadHistory}
                 loadingHistory={loadingHistory}
