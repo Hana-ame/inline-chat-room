@@ -319,6 +319,9 @@ const ChatApp = () => {
   const initialPosRef = useRef({ x: 0, y: 0 });
   const hasMovedRef = useRef(false);
 
+  // 【新增】记录上次有效点击的时间戳
+  const lastClickTimeRef = useRef(0);
+
   // Chat Data State
   const [username, setUsername] = useState(
     localStorage.getItem("chat_username") || ""
@@ -410,6 +413,18 @@ const ChatApp = () => {
     setIsDragging(false);
     setIsHovered(false); // 恢复透明度逻辑
     if (!hasMovedRef.current) {
+      const now = Date.now();
+
+      // 【新增】检查时间阈值 (500ms)
+      // 如果距离上次有效操作小于 500ms，说明可能是重复点击或鬼触，直接忽略
+      if (now - lastClickTimeRef.current < 500) {
+        return;
+      }
+
+      // 更新时间戳
+      lastClickTimeRef.current = now;
+
+      // 执行切换
       setIsOpen((prev) => !prev);
     }
   };
