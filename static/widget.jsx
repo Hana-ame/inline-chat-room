@@ -1,9 +1,8 @@
-// 指向 Go 服务器 API 地址
-const SERVER_URL = "__API_HOST__"; // Go服务器启动时会替换此值
+const SERVER_URL = "__API_HOST__";
 
-const { useState, useEffect, useRef, useMemo } = React;
+const { useState, useEffect, useRef } = React;
 
-// 简单的 UUID 生成器
+// UUID 生成器
 const generateUUID = () => {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
     var r = (Math.random() * 16) | 0,
@@ -13,10 +12,9 @@ const generateUUID = () => {
 };
 
 // =============================================================================
-// 1. 样式定义 (增强隔离)
+// 1. 样式定义
 // =============================================================================
 const styles = {
-  // 基础重置，防止外部 CSS 污染
   reset: {
     boxSizing: "border-box",
     lineHeight: "1.5",
@@ -28,8 +26,9 @@ const styles = {
   },
   ball: {
     position: "fixed",
-    width: "60px",
-    height: "60px",
+    // 【UI修改】尺寸改小 (48px)
+    width: "48px",
+    height: "48px",
     borderRadius: "50%",
     backgroundColor: "#007bff",
     color: "white",
@@ -39,9 +38,11 @@ const styles = {
     cursor: "pointer",
     zIndex: 2147483647,
     boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
-    fontSize: "30px",
     userSelect: "none",
+    // 【核心修复】禁止浏览器默认的触摸行为（滚动/缩放），解决移动端回弹问题
     touchAction: "none",
+    // 【UI修改】添加过渡动画
+    transition: "opacity 0.2s, transform 0.1s",
   },
   windowPC: {
     position: "fixed",
@@ -95,7 +96,6 @@ const styles = {
     backgroundColor: "#fff",
     alignItems: "center",
   },
-  // Input 和 Button 加上 !important 级别的样式或者是足够详细的样式以覆盖全局
   inputReset: {
     flex: 1,
     padding: "10px 15px",
@@ -151,25 +151,10 @@ const styles = {
     marginLeft: "4px",
     cursor: "help",
   },
-  tooltip: {
-    position: "absolute",
-    bottom: "100%",
-    left: "0",
-    backgroundColor: "rgba(0,0,0,0.85)",
-    color: "#fff",
-    padding: "8px",
-    borderRadius: "6px",
-    fontSize: "10px",
-    whiteSpace: "pre",
-    display: "none",
-    zIndex: 99999,
-    lineHeight: "1.4",
-    pointerEvents: "none",
-  },
 };
 
 // =============================================================================
-// 2. 组件
+// 2. 组件定义
 // =============================================================================
 
 const LoginScreen = ({ onLogin }) => {
@@ -240,8 +225,9 @@ const MessageList = ({
         </div>
       )}
       {messages.map((m) => {
-        // 【核心修改】使用 SessionID 判断是否是自己
         const isMe = m.session_id === currentSessionID;
+        const infoText = `ID: ${m.ip_hash}\nUA: ${m.ua}\nRef: ${m.referer}`;
+
         return (
           <div
             key={m.id}
@@ -252,31 +238,8 @@ const MessageList = ({
             }}
           >
             {!isMe && (
-              <div
-                style={{ position: "relative", marginLeft: "4px" }}
-                onMouseEnter={(e) => {
-                  if (isMobile) return;
-                  const tip = e.currentTarget.querySelector(".tooltip-box");
-                  if (tip) tip.style.display = "block";
-                }}
-                onMouseLeave={(e) => {
-                  const tip = e.currentTarget.querySelector(".tooltip-box");
-                  if (tip) tip.style.display = "none";
-                }}
-              >
+              <div style={{ marginLeft: "4px" }} title={infoText}>
                 <span style={styles.usernameDisplay}>{m.username}</span>
-                <div className="tooltip-box" style={styles.tooltip}>
-                  <div>ID: {m.ip_hash} (IP Hash)</div>
-                  <div
-                    style={{
-                      maxWidth: "150px",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    UA: {m.ua}
-                  </div>
-                </div>
               </div>
             )}
             <div
@@ -341,37 +304,35 @@ const MessageInput = ({ onSend, isSending }) => {
 // --- Main App ---
 
 const ChatApp = () => {
+  // UI State
   const [isOpen, setIsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [isHovered, setIsHovered] = useState(false); // 控制半透明
+
+  // Drag State
   const [pos, setPos] = useState({
-    x: window.innerWidth - 80,
-    y: window.innerHeight - 80,
+    x: window.innerWidth - 70,
+    y: window.innerHeight - 100,
   });
   const [isDragging, setIsDragging] = useState(false);
-
   const dragStartRef = useRef({ x: 0, y: 0 });
   const initialPosRef = useRef({ x: 0, y: 0 });
   const hasMovedRef = useRef(false);
 
-  // 用户状态
+  // Chat Data State
   const [username, setUsername] = useState(
     localStorage.getItem("chat_username") || ""
   );
   const [isLoggedIn, setIsLoggedIn] = useState(
     !!localStorage.getItem("chat_username")
   );
-
-  // Session 状态
   const [sessionID, setSessionID] = useState("");
-
-  // 聊天数据
   const [messages, setMessages] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isSending, setIsSending] = useState(false);
-
   const poller = useRef(null);
 
-  // 初始化 Session ID
+  // Init Session
   useEffect(() => {
     let sid = localStorage.getItem("chat_session_id");
     if (!sid) {
@@ -381,65 +342,96 @@ const ChatApp = () => {
     setSessionID(sid);
   }, []);
 
+  // Init Mobile Check
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth <= 768);
+      // 简单限制边界防止出界
       setPos((p) => ({
-        x: Math.min(p.x, window.innerWidth - 60),
-        y: Math.min(p.y, window.innerHeight - 60),
+        x: Math.min(p.x, window.innerWidth - 50),
+        y: Math.min(p.y, window.innerHeight - 50),
       }));
     };
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // 拖拽逻辑
-  const handleDragStart = (cx, cy) => {
+  // -------------------------------------------------------------------------
+  // 核心修复：拖拽逻辑
+  // -------------------------------------------------------------------------
+  const handleDragStart = (e) => {
+    // 兼容 Mouse 和 Touch 事件获取坐标
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
     setIsDragging(true);
     hasMovedRef.current = false;
-    dragStartRef.current = { x: cx, y: cy };
+    dragStartRef.current = { x: clientX, y: clientY };
     initialPosRef.current = { ...pos };
-  };
-  const handleDragMove = (cx, cy) => {
-    if (!isDragging) return;
-    const dx = cx - dragStartRef.current.x;
-    const dy = cy - dragStartRef.current.y;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) hasMovedRef.current = true;
-    setPos({
-      x: Math.max(
-        0,
-        Math.min(initialPosRef.current.x + dx, window.innerWidth - 60)
-      ),
-      y: Math.max(
-        0,
-        Math.min(initialPosRef.current.y + dy, window.innerHeight - 60)
-      ),
-    });
-  };
-  const handleDragEnd = () => {
-    setIsDragging(false);
-    if (!hasMovedRef.current) setIsOpen(!isOpen);
+
+    // 拖拽时设为不透明
+    setIsHovered(true);
   };
 
+  const handleDragMove = (e) => {
+    if (!isDragging) return;
+
+    // 【关键】防止移动端页面跟随滚动
+    if (e.cancelable && e.type === "touchmove") {
+      e.preventDefault();
+    }
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const dx = clientX - dragStartRef.current.x;
+    const dy = clientY - dragStartRef.current.y;
+
+    // 设置一个小的阈值，区分点击和拖拽
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      hasMovedRef.current = true;
+    }
+
+    const ballSize = 48; // 更新后的尺寸
+    const newX = initialPosRef.current.x + dx;
+    const newY = initialPosRef.current.y + dy;
+
+    // 边界计算
+    const maxX = window.innerWidth - ballSize;
+    const maxY = window.innerHeight - ballSize;
+
+    setPos({
+      x: Math.max(0, Math.min(newX, maxX)),
+      y: Math.max(0, Math.min(newY, maxY)),
+    });
+  };
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
+    setIsHovered(false); // 恢复透明度逻辑
+    if (!hasMovedRef.current) {
+      setIsOpen((prev) => !prev);
+    }
+  };
+
+  // 绑定全局事件，确保拖拽流畅且不丢失
   useEffect(() => {
-    const onMove = (e) => isDragging && handleDragMove(e.clientX, e.clientY);
-    const onUp = () => isDragging && handleDragEnd();
-    const onTouchMove = (e) =>
-      isDragging && handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
     if (isDragging) {
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-      window.addEventListener("touchmove", onTouchMove, { passive: false });
-      window.addEventListener("touchend", onUp);
+      window.addEventListener("mousemove", handleDragMove);
+      window.addEventListener("mouseup", handleDragEnd);
+      // 【关键】passive: false 允许 preventDefault
+      window.addEventListener("touchmove", handleDragMove, { passive: false });
+      window.addEventListener("touchend", handleDragEnd);
     }
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onUp);
+      window.removeEventListener("mousemove", handleDragMove);
+      window.removeEventListener("mouseup", handleDragEnd);
+      window.removeEventListener("touchmove", handleDragMove);
+      window.removeEventListener("touchend", handleDragEnd);
     };
   }, [isDragging]);
 
+  // Chat Logic (API calls etc...)
   const loadData = async (params) => {
     try {
       return await (
@@ -501,7 +493,7 @@ const ChatApp = () => {
       await fetch(`${SERVER_URL}/api/send`, {
         method: "POST",
         body: JSON.stringify({
-          session_id: sessionID, // 发送 SessionID
+          session_id: sessionID,
           username,
           content,
           ua: navigator.userAgent,
@@ -520,7 +512,7 @@ const ChatApp = () => {
     if (isMobile) return { ...styles.windowMobile, ...styles.reset };
     const w = 350,
       h = 500,
-      ball = 60,
+      ball = 48,
       gap = 15;
     let left = pos.x - w + ball;
     let top = pos.y - h - gap;
@@ -532,6 +524,16 @@ const ChatApp = () => {
       left: left + "px",
       top: top + "px",
     };
+  };
+
+  // 动态计算透明度样式
+  const ballDynamicStyle = {
+    ...styles.ball,
+    left: pos.x + "px",
+    top: pos.y + "px",
+    // 【UI修改】半透明逻辑：拖拽中或悬浮时=1.0，否则0.6
+    opacity: isDragging || isHovered || isOpen ? 1.0 : 0.6,
+    transform: isDragging || isHovered ? "scale(1.1)" : "scale(1)",
   };
 
   return (
@@ -569,18 +571,20 @@ const ChatApp = () => {
         </div>
       )}
       <div
-        style={{ ...styles.ball, left: pos.x + "px", top: pos.y + "px" }}
-        onMouseDown={(e) => handleDragStart(e.clientX, e.clientY)}
-        onTouchStart={(e) =>
-          handleDragStart(e.touches[0].clientX, e.touches[0].clientY)
-        }
+        style={ballDynamicStyle}
+        onMouseDown={handleDragStart}
+        onTouchStart={handleDragStart}
+        // PC端悬浮效果
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
       >
         {isOpen ? (
           "✕"
         ) : (
+          // 【UI修改】图标改小 (20x20)
           <svg
-            width="30"
-            height="30"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"

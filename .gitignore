@@ -1,4 +1,6 @@
 *.db
 *.tar.gz
 
+runtime 
+
 chat.db

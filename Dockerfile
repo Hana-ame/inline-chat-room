@@ -26,7 +26,7 @@ RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o chat-server main.go
 FROM alpine:latest
 
 # 安装 CA 证书 (如果需要请求 HTTPS) 和时区数据
-RUN apk add --no-cache ca-certificates tzdata
+# RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
