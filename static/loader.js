@@ -1,6 +1,5 @@
 (function () {
-  // 【关键修改】这里使用占位符，Go服务器会在运行时替换它
-  const API_HOST = "__API_HOST__";
+  const API_HOST = "__API_HOST__"; // Go服务器启动时会替换此值
   const WIDGET_URL = API_HOST + "/widget.jsx";
 
   const loadScript = (src) => {

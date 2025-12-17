@@ -1,0 +1,32 @@
+services:
+  chat-server:
+    image: inline-chat-server:v1  # 直接指定镜像名，不再编译
+    container_name: inline-chat-server
+    restart: always
+    ports:
+      - "127.25.12.18:8080:8080"
+    environment:
+      - APP_HOST=https://inline-chat.moonchan.xyz # 修改为服务器的实际IP或域名
+    volumes:
+      # 数据持久化目录，运行时生成的文件和DB会在这里
+      - ./data:/app/runtime
+
+#########
+# build #
+#########
+
+# services:
+#   chat-server:
+#     build: .
+#     container_name: inline-chat-server
+#     restart: always
+#     ports:
+#       - "8765:8765"
+#     environment:
+#       # 修改这里为你部署的实际 IP 或域名
+#       # - APP_HOST=http://localhost:8765
+#       - APP_HOST=https://inline-chat.moonchan.xyz
+#     volumes:
+#       # 将宿主机的 ./data 目录挂载到容器内的 /app/runtime
+#       # 这样你可以在 ./data 中看到生成的 js 文件和 chat.db
+#       - ./data:/app/runtime

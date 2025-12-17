@@ -1,5 +1,5 @@
 // 指向 Go 服务器 API 地址
-const SERVER_URL = "__API_HOST__";
+const SERVER_URL = "__API_HOST__"; // Go服务器启动时会替换此值
 
 const { useState, useEffect, useRef } = React;
 

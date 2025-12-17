@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,11 +20,16 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
-// 全局变量存储 Host 地址
-var appHost string
+// 全局配置
+var (
+	appHost    string
+	runtimeDir = "./runtime"
+	dbPath     = filepath.Join(runtimeDir, "chat.db")
+	db         *sql.DB
+	dbLock     sync.Mutex
+)
 
-// ... (Message 结构体, db 变量, initDB 函数保持不变) ...
-
+// --- 数据模型 ---
 type Message struct {
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`
@@ -33,15 +39,60 @@ type Message struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-var db *sql.DB
-var dbLock sync.Mutex
+// --- 初始化 ---
+
+func initEnvironment() {
+	// 1. 获取环境变量
+	appHost = os.Getenv("APP_HOST")
+	if appHost == "" {
+		appHost = "http://localhost:8765"
+		fmt.Println("Warning: APP_HOST not set, defaulting to", appHost)
+	} else {
+		appHost = strings.TrimRight(appHost, "/")
+	}
+
+	// 2. 创建 runtime 目录
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		log.Fatal("Failed to create runtime directory:", err)
+	}
+
+	// 3. 处理并保存静态文件到 runtime
+	processAndSaveFile("loader.js")
+	processAndSaveFile("widget.jsx")
+
+	// 4. 初始化数据库
+	initDB()
+}
+
+func processAndSaveFile(filename string) {
+	// 从 embed 读取模板
+	contentBytes, err := staticFiles.ReadFile("static/" + filename)
+	if err != nil {
+		log.Fatalf("Failed to read template %s: %v", filename, err)
+	}
+
+	// 替换占位符
+	contentStr := string(contentBytes)
+	finalContent := strings.ReplaceAll(contentStr, "__API_HOST__", appHost)
+
+	// 写入 runtime 目录
+	destPath := filepath.Join(runtimeDir, filename)
+	err = os.WriteFile(destPath, []byte(finalContent), 0644)
+	if err != nil {
+		log.Fatalf("Failed to write runtime file %s: %v", destPath, err)
+	}
+	fmt.Printf("Generated runtime file: %s (API_HOST: %s)\n", destPath, appHost)
+}
 
 func initDB() {
 	var err error
-	db, err = sql.Open("sqlite3", "./chat.db")
+	fmt.Println("Opening Database at:", dbPath)
+	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// 测试连接并创建表
 	query := `
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,9 +104,11 @@ func initDB() {
     );`
 	_, err = db.Exec(query)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("DB Init Error:", err)
 	}
 }
+
+// --- HTTP Helpers ---
 
 func enableCors(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Origin", "*")
@@ -63,32 +116,22 @@ func enableCors(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
-// --- 【关键修改】静态文件 Handler ---
-// 这里读取文件后，将 __API_HOST__ 替换为实际的 appHost
-func handleStaticFile(filename string, contentType string) http.HandlerFunc {
+// 从磁盘 runtime 目录提供文件
+func handleRuntimeFile(filename string, contentType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		enableCors(&w)
-
-		// 1. 读取 embed 文件 (二进制)
-		contentBytes, err := staticFiles.ReadFile("static/" + filename)
+		filePath := filepath.Join(runtimeDir, filename)
+		content, err := os.ReadFile(filePath)
 		if err != nil {
-			http.Error(w, "File not found", 404)
+			http.Error(w, "File not found in runtime", 404)
 			return
 		}
-
-		// 2. 转换为字符串
-		contentStr := string(contentBytes)
-
-		// 3. 执行替换：将占位符替换为环境变量的值
-		// 这样前端 JS 拿到的就是 http://your-domain.com 而不是 __API_HOST__
-		finalContent := strings.ReplaceAll(contentStr, "__API_HOST__", appHost)
-
 		w.Header().Set("Content-Type", contentType)
-		w.Write([]byte(finalContent))
+		w.Write(content)
 	}
 }
 
-// ... (handleMessages 和 handleSend 保持不变) ...
+// --- API Handlers (保持不变) ---
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
@@ -181,22 +224,12 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// 【关键修改】初始化时读取环境变量
-	// 如果没有设置 APP_HOST，则默认回退到 localhost
-	appHost = os.Getenv("APP_HOST")
-	if appHost == "" {
-		appHost = "http://localhost:8765" // 默认值
-		fmt.Println("Warning: APP_HOST not set, defaulting to", appHost)
-	} else {
-		// 简单的格式修正，确保没有尾部斜杠
-		appHost = strings.TrimRight(appHost, "/")
-		fmt.Println("Using APP_HOST:", appHost)
-	}
+	initEnvironment()
 
-	initDB()
+	// 路由：此时从 runtime 文件夹读取文件
+	http.HandleFunc("/loader.js", handleRuntimeFile("loader.js", "application/javascript"))
+	http.HandleFunc("/widget.jsx", handleRuntimeFile("widget.jsx", "text/plain"))
 
-	http.HandleFunc("/loader.js", handleStaticFile("loader.js", "application/javascript"))
-	http.HandleFunc("/widget.jsx", handleStaticFile("widget.jsx", "text/plain"))
 	http.HandleFunc("/api/messages", handleMessages)
 	http.HandleFunc("/api/send", handleSend)
 
