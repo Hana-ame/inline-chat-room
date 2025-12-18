@@ -1,6 +1,7 @@
 const SERVER_URL = "__API_HOST__";
 
-const { useState, useEffect, useRef } = React;
+// 【修改】添加 useMemo
+const { useState, useEffect, useRef, useMemo } = React;
 
 // UUID 生成器
 const generateUUID = () => {
@@ -26,7 +27,6 @@ const styles = {
   },
   ball: {
     position: "fixed",
-    // 【UI修改】尺寸改小 (48px)
     width: "48px",
     height: "48px",
     borderRadius: "50%",
@@ -39,9 +39,7 @@ const styles = {
     zIndex: 2147483647,
     boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
     userSelect: "none",
-    // 【核心修复】禁止浏览器默认的触摸行为（滚动/缩放），解决移动端回弹问题
     touchAction: "none",
-    // 【UI修改】添加过渡动画
     transition: "opacity 0.2s, transform 0.1s",
   },
   windowPC: {
@@ -78,6 +76,21 @@ const styles = {
     minHeight: "46px",
   },
   title: { fontWeight: "bold", fontSize: "15px", color: "#333", margin: 0 },
+  // 【新增】头部右侧按钮组容器
+  headerRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: "15px", // 按钮之间的间距
+  },
+  iconBtn: {
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#666",
+    fontSize: "18px",
+    transition: "color 0.2s",
+  },
   chatArea: {
     flex: 1,
     overflowY: "auto",
@@ -157,15 +170,24 @@ const styles = {
 // 2. 组件定义
 // =============================================================================
 
-const LoginScreen = ({ onLogin }) => {
-  const [name, setName] = useState("");
+const LoginScreen = ({ onLogin, currentName }) => {
+  // 如果之前有名字，就用之前的，否则为空
+  const [name, setName] = useState(currentName || "");
   const inputRef = useRef(null);
+
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
+  // 【修改】生成随机后缀的默认名称 (例如: 动漫高手a1b2)
+  const randomDefaultName = useMemo(() => {
+    const suffix = Math.random().toString(36).substring(2, 6);
+    return `动漫高手${suffix}`;
+  }, []);
+
   const handleSubmit = () => {
-    const finalName = name.trim() === "" ? "动漫高手" : name;
+    // 【修改】如果输入为空，使用带有随机后缀的名称
+    const finalName = name.trim() === "" ? randomDefaultName : name;
     onLogin(finalName);
   };
 
@@ -176,7 +198,8 @@ const LoginScreen = ({ onLogin }) => {
       <input
         ref={inputRef}
         type="text"
-        placeholder="动漫高手"
+        // 【修改】placeholder 显示生成的随机名
+        placeholder={randomDefaultName}
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
@@ -307,7 +330,7 @@ const ChatApp = () => {
   // UI State
   const [isOpen, setIsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const [isHovered, setIsHovered] = useState(false); // 控制半透明
+  const [isHovered, setIsHovered] = useState(false);
 
   // Drag State
   const [pos, setPos] = useState({
@@ -318,8 +341,6 @@ const ChatApp = () => {
   const dragStartRef = useRef({ x: 0, y: 0 });
   const initialPosRef = useRef({ x: 0, y: 0 });
   const hasMovedRef = useRef(false);
-
-  // 【新增】记录上次有效点击的时间戳
   const lastClickTimeRef = useRef(0);
 
   // Chat Data State
@@ -349,7 +370,6 @@ const ChatApp = () => {
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth <= 768);
-      // 简单限制边界防止出界
       setPos((p) => ({
         x: Math.min(p.x, window.innerWidth - 50),
         y: Math.min(p.y, window.innerHeight - 50),
@@ -359,11 +379,8 @@ const ChatApp = () => {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // -------------------------------------------------------------------------
-  // 核心修复：拖拽逻辑
-  // -------------------------------------------------------------------------
+  // Drag Logic
   const handleDragStart = (e) => {
-    // 兼容 Mouse 和 Touch 事件获取坐标
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
@@ -371,35 +388,27 @@ const ChatApp = () => {
     hasMovedRef.current = false;
     dragStartRef.current = { x: clientX, y: clientY };
     initialPosRef.current = { ...pos };
-
-    // 拖拽时设为不透明
     setIsHovered(true);
   };
 
   const handleDragMove = (e) => {
     if (!isDragging) return;
-
-    // 【关键】防止移动端页面跟随滚动
     if (e.cancelable && e.type === "touchmove") {
       e.preventDefault();
     }
 
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
     const dx = clientX - dragStartRef.current.x;
     const dy = clientY - dragStartRef.current.y;
 
-    // 设置一个小的阈值，区分点击和拖拽
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
       hasMovedRef.current = true;
     }
 
-    const ballSize = 48; // 更新后的尺寸
+    const ballSize = 48;
     const newX = initialPosRef.current.x + dx;
     const newY = initialPosRef.current.y + dy;
-
-    // 边界计算
     const maxX = window.innerWidth - ballSize;
     const maxY = window.innerHeight - ballSize;
 
@@ -411,30 +420,19 @@ const ChatApp = () => {
 
   const handleDragEnd = () => {
     setIsDragging(false);
-    setIsHovered(false); // 恢复透明度逻辑
+    setIsHovered(false);
     if (!hasMovedRef.current) {
       const now = Date.now();
-
-      // 【新增】检查时间阈值 (500ms)
-      // 如果距离上次有效操作小于 500ms，说明可能是重复点击或鬼触，直接忽略
-      if (now - lastClickTimeRef.current < 500) {
-        return;
-      }
-
-      // 更新时间戳
+      if (now - lastClickTimeRef.current < 500) return;
       lastClickTimeRef.current = now;
-
-      // 执行切换
       setIsOpen((prev) => !prev);
     }
   };
 
-  // 绑定全局事件，确保拖拽流畅且不丢失
   useEffect(() => {
     if (isDragging) {
       window.addEventListener("mousemove", handleDragMove);
       window.addEventListener("mouseup", handleDragEnd);
-      // 【关键】passive: false 允许 preventDefault
       window.addEventListener("touchmove", handleDragMove, { passive: false });
       window.addEventListener("touchend", handleDragEnd);
     }
@@ -446,7 +444,7 @@ const ChatApp = () => {
     };
   }, [isDragging]);
 
-  // Chat Logic (API calls etc...)
+  // Chat Logic
   const loadData = async (params) => {
     try {
       return await (
@@ -502,6 +500,12 @@ const ChatApp = () => {
     setUsername(name);
     setIsLoggedIn(true);
   };
+
+  // 【新增】处理设置点击（回到登录页）
+  const handleOpenSettings = () => {
+    setIsLoggedIn(false);
+  };
+
   const handleSend = async (content) => {
     setIsSending(true);
     try {
@@ -541,12 +545,10 @@ const ChatApp = () => {
     };
   };
 
-  // 动态计算透明度样式
   const ballDynamicStyle = {
     ...styles.ball,
     left: pos.x + "px",
     top: pos.y + "px",
-    // 【UI修改】半透明逻辑：拖拽中或悬浮时=1.0，否则0.6
     opacity: isDragging || isHovered || isOpen ? 1.0 : 0.6,
     transform: isDragging || isHovered ? "scale(1.1)" : "scale(1)",
   };
@@ -557,20 +559,54 @@ const ChatApp = () => {
         <div style={getWindowStyle()}>
           <div style={{ ...styles.header, ...styles.reset }}>
             <span style={styles.title}>群聊（测试版）</span>
-            <span
-              style={{
-                cursor: "pointer",
-                fontSize: "20px",
-                padding: "0 5px",
-                color: "#666",
-              }}
-              onClick={() => setIsOpen(false)}
-            >
-              ✕
-            </span>
+
+            {/* 【修改】右侧按钮区域：包含设置和关闭 */}
+            <div style={styles.headerRight}>
+              {/* 仅在已登录状态下显示齿轮 */}
+              {isLoggedIn && (
+                <div
+                  style={styles.iconBtn}
+                  onClick={handleOpenSettings}
+                  title="设置/修改昵称"
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                  </svg>
+                </div>
+              )}
+              <div
+                style={styles.iconBtn}
+                onClick={() => setIsOpen(false)}
+                title="关闭"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </div>
+            </div>
           </div>
           {!isLoggedIn ? (
-            <LoginScreen onLogin={handleLogin} />
+            <LoginScreen onLogin={handleLogin} currentName={username} />
           ) : (
             <>
               <MessageList
@@ -589,14 +625,24 @@ const ChatApp = () => {
         style={ballDynamicStyle}
         onMouseDown={handleDragStart}
         onTouchStart={handleDragStart}
-        // PC端悬浮效果
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
         {isOpen ? (
-          "✕"
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
         ) : (
-          // 【UI修改】图标改小 (20x20)
           <svg
             width="20"
             height="20"
