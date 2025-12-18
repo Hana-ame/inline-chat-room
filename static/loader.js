@@ -14,11 +14,13 @@
   };
 
   const init = async () => {
-    await loadScript("https://unpkg.com/react@18/umd/react.production.min.js");
     await loadScript(
-      "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+      "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
     );
-    await loadScript("https://unpkg.com/@babel/standalone/babel.min.js");
+    await loadScript(
+      "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+    );
+    await loadScript("https://unpkg.com/@babel/standalone@7.28.5/babel.min.js");
 
     try {
       const response = await fetch(WIDGET_URL);
