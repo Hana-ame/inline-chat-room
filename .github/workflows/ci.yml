@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [go-server]
+  pull_request:
+    branches: [go-server]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+
+      - name: Install gcc (CGO for sqlite)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test -v ./...
+
+      - name: Go build
+        run: CGO_ENABLED=1 go build -ldflags="-s -w" -o /tmp/chat-server ./main.go
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check widget.jsx compiles to widget.js (Babel)
+        run: |
+          npm install --no-save --prefix . @babel/standalone@7.28.5
+          node -e "
+            const babel = require('./node_modules/@babel/standalone/babel.js');
+            const fs = require('fs');
+            const src = fs.readFileSync('static/widget.jsx','utf8');
+            const out = babel.transform(src, { presets: ['react'], filename: 'widget.jsx' }).code;
+            fs.writeFileSync('/tmp/widget.check.js', out);
+          "
+          node --check /tmp/widget.check.js
+          echo "widget.jsx compiles OK"
+
+      - name: Check committed widget.js is up to date
+        run: |
+          npm install --no-save --prefix . @babel/standalone@7.28.5
+          node -e "
+            const babel = require('./node_modules/@babel/standalone/babel.js');
+            const fs = require('fs');
+            const src = fs.readFileSync('static/widget.jsx','utf8');
+            const out = babel.transform(src, { presets: ['react'], filename: 'widget.jsx' }).code;
+            if (fs.existsSync('static/widget.js')) {
+              const cur = fs.readFileSync('static/widget.js','utf8');
+              if (cur !== out) {
+                console.error('static/widget.js is STALE — run ./compile-widget.sh');
+                process.exit(1);
+              }
+            }
+            console.log('widget.js is up to date');
+          "

@@ -1,6 +1,6 @@
 (function () {
   const API_HOST = "__API_HOST__"; // Go服务器启动时会替换此值
-  const WIDGET_URL = API_HOST + "/widget.jsx";
+  const WIDGET_URL = API_HOST + "/widget.js"; // 编译好的 JS，走 HTTP 缓存
 
   const loadScript = (src) => {
     return new Promise((resolve, reject) => {
@@ -14,24 +14,15 @@
   };
 
   const init = async () => {
+    // 只加载 React + ReactDOM；不再需要 Babel（widget 已预编译成 JS）
     await loadScript(
       "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
     );
     await loadScript(
       "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
     );
-    await loadScript("https://unpkg.com/@babel/standalone@7.28.5/babel.min.js");
-
     try {
-      const response = await fetch(WIDGET_URL);
-      if (!response.ok) throw new Error("Failed to load widget source");
-      const jsxCode = await response.text();
-
-      const transformed = Babel.transform(jsxCode, {
-        presets: ["env", "react"],
-      }).code;
-      const exec = new Function("React", "ReactDOM", transformed);
-      exec(window.React, window.ReactDOM);
+      await loadScript(WIDGET_URL);
     } catch (err) {
       console.error("Chat Widget Load Error:", err);
     }

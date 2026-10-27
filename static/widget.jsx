@@ -1,4 +1,5 @@
 const SERVER_URL = "__API_HOST__";
+const UPLOAD_URL = "https://upload.moonchan.xyz/api/upload"; // 图床上传（raw body PUT，见 KB moonchan-upload-api）
 
 // 【修改】添加 useMemo
 const { useState, useEffect, useRef, useMemo } = React;
@@ -250,6 +251,12 @@ const MessageList = ({
       {messages.map((m) => {
         const isMe = m.session_id === currentSessionID;
         const infoText = `ID: ${m.ip_hash}\nUA: ${m.ua}\nRef: ${m.referer}`;
+        // 图片消息：content 以 http 开头且命中图片扩展名（upload.moonchan.xyz 返回的 url）
+        const isImage =
+          typeof m.content === "string" &&
+          /^https?:\/\/\S+\.(png|jpe?g|gif|webp|bmp|avif)(\?\S*)?$/i.test(
+            m.content
+          );
 
         return (
           <div
@@ -269,9 +276,24 @@ const MessageList = ({
               style={{
                 ...styles.msgBubble,
                 ...(isMe ? styles.myMsg : styles.otherMsg),
+                padding: isImage ? "4px" : undefined,
               }}
             >
-              {m.content}
+              {isImage ? (
+                <img
+                  src={m.content}
+                  alt=""
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "220px",
+                    borderRadius: "6px",
+                    display: "block",
+                  }}
+                  onClick={() => window.open(m.content, "_blank")}
+                />
+              ) : (
+                m.content
+              )}
             </div>
           </div>
         );
@@ -281,8 +303,9 @@ const MessageList = ({
   );
 };
 
-const MessageInput = ({ onSend, isSending }) => {
+const MessageInput = ({ onSend, isSending, onUploadImage, isUploading }) => {
   const [val, setVal] = useState("");
+  const fileRef = useRef(null);
   const handleSend = () => {
     if (!val.trim() || isSending) return;
     onSend(val);
@@ -292,8 +315,38 @@ const MessageInput = ({ onSend, isSending }) => {
   const disabled = isSending || !val.trim();
   const btnBg = disabled ? "#ccc" : "#007bff";
 
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) onUploadImage(file);
+    e.target.value = ""; // 允许重复选同一文件
+  };
+
   return (
     <div style={{ ...styles.inputArea, ...styles.reset }}>
+      {/* 图片上传按钮：选图 → 传 upload.moonchan.xyz → 作为图片消息发送 */}
+      <button
+        onClick={() => fileRef.current && fileRef.current.click()}
+        disabled={isUploading}
+        title="上传图片"
+        style={{
+          ...styles.btnReset,
+          backgroundColor: "#f1f0f0",
+          color: "#333",
+          cursor: isUploading ? "wait" : "pointer",
+          padding: "0 10px",
+          height: "36px",
+          flex: "none",
+        }}
+      >
+        {isUploading ? "…" : "🖼"}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
       <input
         style={styles.inputReset}
         value={val}
@@ -344,6 +397,8 @@ const ChatApp = () => {
   const lastClickTimeRef = useRef(0);
 
   // Chat Data State
+  // 【免注册直接开聊】保持原样：输入一个昵称就开始聊（无注册/无鉴权）。
+  // 已有昵称则直接进入聊天；无则显示登录屏（LoginScreen）让用户输入。
   const [username, setUsername] = useState(
     localStorage.getItem("chat_username") || ""
   );
@@ -355,6 +410,36 @@ const ChatApp = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const poller = useRef(null);
+
+  // 【公告】窗口悬浮顶置 + 角标红点
+  const [announcement, setAnnouncement] = useState("");
+  const [annUpdatedAt, setAnnUpdatedAt] = useState(0);
+  const [annSeen, setAnnSeen] = useState(
+    parseInt(localStorage.getItem("chat_ann_seen") || "0", 10)
+  );
+  const [annClosed, setAnnClosed] = useState(false);
+
+  // 拉取公告：updated_at 比本地已读新则亮红点
+  useEffect(() => {
+    fetch(`${SERVER_URL}/api/announcement`)
+      .then((r) => r.json())
+      .then((d) => {
+        setAnnouncement(d.text || "");
+        setAnnUpdatedAt(d.updated_at || 0);
+      })
+      .catch(() => {});
+  }, []);
+
+  // 打开窗口即视为已读（清除红点）
+  useEffect(() => {
+    if (isOpen && annUpdatedAt > annSeen) {
+      localStorage.setItem("chat_ann_seen", String(annUpdatedAt));
+      setAnnSeen(annUpdatedAt);
+    }
+  }, [isOpen, annUpdatedAt]);
+
+  const annVisible = !!announcement && !annClosed;
+  const annUnread = annUpdatedAt > annSeen;
 
   // Init Session
   useEffect(() => {
@@ -461,22 +546,37 @@ const ChatApp = () => {
       setMessages(msgs);
       setTimeout(scrollToBottom, 100);
     });
-    poller.current = setInterval(() => {
-      setMessages((prev) => {
-        const lastId = prev.length ? prev[prev.length - 1].id : 0;
-        loadData({ after_id: lastId }).then((newMsgs) => {
-          if (newMsgs.length > 0) {
+    // 【长轮询】单连接循环代替 2s 短轮询：poll 挂起到有新消息或超时
+    let stopped = false;
+    const pollLoop = async () => {
+      while (!stopped) {
+        try {
+          let lastId = 0;
+          setMessages((prev) => {
+            lastId = prev.length ? prev[prev.length - 1].id : 0;
+            return prev;
+          });
+          const resp = await fetch(
+            `${SERVER_URL}/api/poll?after_id=${lastId}&timeout=25`
+          );
+          const newMsgs = await resp.json();
+          if (!stopped && Array.isArray(newMsgs) && newMsgs.length > 0) {
             const el = document.getElementById("msg-end");
             const shouldScroll =
               el && el.getBoundingClientRect().top < window.innerHeight;
             setMessages((curr) => [...curr, ...newMsgs]);
             if (shouldScroll || !el) setTimeout(scrollToBottom, 100);
           }
-        });
-        return prev;
-      });
-    }, 2000);
-    return () => clearInterval(poller.current);
+        } catch (e) {
+          // 网络错误：等一会再试（不终止循环）
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+    };
+    poller.current = pollLoop();
+    return () => {
+      stopped = true;
+    };
   }, [isLoggedIn, isOpen]);
 
   const scrollToBottom = () =>
@@ -522,6 +622,43 @@ const ChatApp = () => {
       setTimeout(scrollToBottom, 200);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // 【图片上传】raw body PUT 到 upload.moonchan.xyz（见 KB moonchan-upload-api：
+  // 服务端只认 raw body，禁止 multipart/-F；文件名放 URL 路径）。上传成功后把返回
+  // 的图片 url 作为一条图片消息发到群里。
+  const handleUploadImage = async (file) => {
+    setIsSending(true);
+    try {
+      const fileName = encodeURIComponent(file.name || "image.png");
+      const resp = await fetch(`${UPLOAD_URL}/${fileName}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      });
+      if (!resp.ok) throw new Error(`upload failed: ${resp.status}`);
+      const data = await resp.json();
+      const imgUrl = data.url;
+      if (!imgUrl) throw new Error("upload response missing url");
+      await fetch(`${SERVER_URL}/api/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          session_id: sessionID,
+          username,
+          content: imgUrl,
+          ua: navigator.userAgent,
+          referer: document.referrer || window.location.href,
+        }),
+      });
+      setTimeout(scrollToBottom, 200);
+    } catch (e) {
+      console.error("image upload error:", e);
+      alert("图片上传失败：" + (e.message || e));
     } finally {
       setIsSending(false);
     }
@@ -605,6 +742,37 @@ const ChatApp = () => {
               </div>
             </div>
           </div>
+          {/* 【公告】窗口悬浮顶置：公告栏固定在标题栏下方 */}
+          {annVisible && (
+            <div
+              style={{
+                padding: "8px 12px",
+                backgroundColor: "#fff7ed",
+                borderBottom: "1px solid #fed7aa",
+                color: "#9a3412",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "8px",
+                position: "relative",
+              }}
+            >
+              <span style={{ flex: 1, wordBreak: "break-word" }}>{announcement}</span>
+              <span
+                style={{
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  color: "#9a3412",
+                  flex: "none",
+                  lineHeight: "1",
+                }}
+                onClick={() => setAnnClosed(true)}
+                title="关闭公告"
+              >
+                ×
+              </span>
+            </div>
+          )}
           {!isLoggedIn ? (
             <LoginScreen onLogin={handleLogin} currentName={username} />
           ) : (
@@ -616,7 +784,12 @@ const ChatApp = () => {
                 onLoadHistory={handleLoadHistory}
                 loadingHistory={loadingHistory}
               />
-              <MessageInput onSend={handleSend} isSending={isSending} />
+              <MessageInput
+                onSend={handleSend}
+                isSending={isSending}
+                onUploadImage={handleUploadImage}
+                isUploading={isSending}
+              />
             </>
           )}
         </div>
@@ -655,6 +828,21 @@ const ChatApp = () => {
           >
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
+        )}
+        {/* 【角标红点】有未读公告且窗口关闭时显示 */}
+        {!isOpen && annUnread && (
+          <div
+            style={{
+              position: "absolute",
+              top: "2px",
+              right: "2px",
+              width: "12px",
+              height: "12px",
+              borderRadius: "50%",
+              backgroundColor: "#e5484d",
+              border: "2px solid #fff",
+            }}
+          />
         )}
       </div>
     </>

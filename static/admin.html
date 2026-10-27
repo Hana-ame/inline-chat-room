@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>inline-chat 后台管理</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         margin: 0; background: #f5f6f8; color: #333; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+          padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input[type=password], input[type=text], textarea {
+    width: 100%; padding: 9px 12px; border: 1px solid #d5d9de; border-radius: 6px;
+    font-size: 14px; }
+  textarea { min-height: 80px; resize: vertical; }
+  button { padding: 9px 18px; border: 0; border-radius: 6px; background: #007bff;
+           color: #fff; font-size: 14px; cursor: pointer; }
+  button:disabled { background: #bbb; cursor: not-allowed; }
+  button.ghost { background: #f1f2f4; color: #333; }
+  button.danger { background: #e5484d; }
+  .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .msg { padding: 8px 10px; border-bottom: 1px solid #f0f1f3; font-size: 13px;
+         display: flex; gap: 10px; align-items: flex-start; }
+  .msg .m-body { flex: 1; word-break: break-all; }
+  .msg .m-meta { color: #888; font-size: 12px; margin-top: 2px; }
+  .msg img { max-width: 120px; max-height: 90px; border-radius: 4px; }
+  .msg .m-del { flex: none; }
+  .hint { color: #888; font-size: 12px; margin-top: 6px; }
+  .hidden { display: none; }
+  #err { color: #e5484d; font-size: 13px; margin-top: 8px; }
+  .banner { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+            padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>inline-chat 后台管理</h1>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <!-- 登录 -->
+  <div id="loginCard" class="card">
+    <h2>管理员登录</h2>
+    <input type="password" id="pw" placeholder="管理密码" autocomplete="current-password">
+    <div class="row"><button id="loginBtn">登录</button></div>
+    <div id="err"></div>
+  </div>
+
+  <!-- 管理面板 -->
+  <div id="panel" class="hidden">
+    <div class="card">
+      <h2>悬浮公告（窗口顶部 + 角标红点）</h2>
+      <textarea id="ann" placeholder="公告内容，留空则关闭公告"></textarea>
+      <div class="row">
+        <button id="saveAnn">保存公告</button>
+        <button id="clearAnn" class="ghost">清空公告</button>
+        <span id="annStatus" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>消息管理 <button id="refreshMsgs" class="ghost" style="margin-left:8px">刷新</button></h2>
+      <div id="msgList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let token = localStorage.getItem("icr_admin_token") || "";
+
+  function showErr(msg) { $("err").textContent = msg || ""; }
+  function banner(msg) {
+    const b = $("banner");
+    if (msg) { b.textContent = msg; b.classList.remove("hidden"); }
+    else b.classList.add("hidden");
+  }
+
+  async function login() {
+    const pw = $("pw").value;
+    try {
+      const r = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (!r.ok) { showErr("密码错误"); return; }
+      const d = await r.json();
+      token = d.token;
+      localStorage.setItem("icr_admin_token", token);
+      showErr("");
+      loadPanel();
+    } catch (e) { showErr("请求失败：" + e.message); }
+  }
+
+  async function loadPanel() {
+    try {
+      const r = await fetch("/api/admin/announcement", {
+        headers: { "Authorization": "Bearer " + token },
+      });
+      if (r.status === 401) { showErr("登录已过期，请重新登录"); $("panel").classList.add("hidden"); $("loginCard").classList.remove("hidden"); return; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = await r.json();
+      $("ann").value = d.text || "";
+      $("loginCard").classList.add("hidden");
+      $("panel").classList.remove("hidden");
+      loadMessages();
+    } catch (e) {
+      $("loginCard").classList.remove("hidden");
+      showErr("加载失败：" + e.message);
+    }
+  }
+
+  async function saveAnn(text) {
+    try {
+      const r = await fetch("/api/admin/announcement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      $("annStatus").textContent = "已保存 " + new Date().toLocaleTimeString();
+      banner(text ? "公告已发布" : "公告已清空");
+    } catch (e) { banner("保存失败：" + e.message); }
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function loadMessages() {
+    try {
+      const r = await fetch("/api/admin/messages?limit=100", {
+        headers: { "Authorization": "Bearer " + token },
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const msgs = await r.json();
+      const list = $("msgList");
+      list.innerHTML = "";
+      if (!msgs.length) { list.innerHTML = '<div class="hint">暂无消息</div>'; return; }
+      msgs.forEach((m) => {
+        const isImg = /^https?:\/\/\S+\.(png|jpe?g|gif|webp|bmp|avif)(\?\S*)?$/i.test(m.content || "");
+        const div = document.createElement("div");
+        div.className = "msg";
+        div.innerHTML =
+          (isImg ? '<img src="' + esc(m.content) + '">' : "") +
+          '<div class="m-body">' +
+            (isImg ? '<a href="' + esc(m.content) + '" target="_blank">' + esc(m.content) + '</a>' : esc(m.content)) +
+            '<div class="m-meta">#' + m.id + " · " + esc(m.username) + " · ip " + esc(m.ip) +
+            " · " + esc(m.ua || "").slice(0, 40) + " · " + new Date(m.created_at * 1000).toLocaleString() + "</div>" +
+          "</div>" +
+          '<button class="m-del danger" data-id="' + m.id + '">删除</button>';
+        list.appendChild(div);
+      });
+      list.querySelectorAll("button.m-del").forEach((btn) => {
+        btn.onclick = async () => {
+          if (!confirm("确认删除 #" + btn.dataset.id + " ?")) return;
+          await fetch("/api/admin/messages/delete?id=" + btn.dataset.id, {
+            headers: { "Authorization": "Bearer " + token },
+          });
+          loadMessages();
+        };
+      });
+    } catch (e) { banner("加载消息失败：" + e.message); }
+  }
+
+  $("loginBtn").onclick = login;
+  $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+  $("saveAnn").onclick = () => saveAnn($("ann").value);
+  $("clearAnn").onclick = () => { $("ann").value = ""; saveAnn(""); };
+  $("refreshMsgs").onclick = loadMessages;
+
+  // 若有 token 自动尝试加载
+  if (token) loadPanel();
+})();
+</script>
+</body>
+</html>

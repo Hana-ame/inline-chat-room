@@ -17,6 +17,10 @@ RUN go mod download
 # 复制源码
 COPY . .
 
+# 编译 widget.jsx -> widget.js（无 node 也能跑：先用已入库的 widget.js，
+# 若存在 node 则重编；这里直接沿用仓库内已编译的 static/widget.js）
+# 如需在镜像内重新编译，可另加 node 阶段；本仓库默认提交编译产物。
+
 # 编译
 # -ldflags="-s -w" 去除调试信息，减小体积
 # CGO_ENABLED=1 是默认的，但显式声明更好
