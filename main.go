@@ -34,6 +34,7 @@ var (
 	dbLock        sync.Mutex
 	adminPassword string
 	adminSecret   []byte // 用于签发/校验 admin token
+	assetVersion  string // widget.js 内容指纹，用于版本化 URL 绕过 CF 长缓存
 )
 
 // --- 数据模型 ---
@@ -70,6 +71,18 @@ func initEnvironment() {
 	processAndSaveFile("loader.js")
 	processAndSaveFile("widget.js")  // 构建期编译好的 JS（无 JSX），可浏览器缓存
 	processAndSaveFile("widget.jsx") // 保留源码副本供排障/兼容
+
+	// 3.5 计算 widget.js 内容指纹 -> 版本化 URL 用。
+	// 原因：Cloudflare zone 的 browser_cache_ttl=31天 会覆盖源站 Cache-Control，
+	// 改 widget.js 后浏览器/CF 仍拿旧版。loader.js 内容固定（每次 fetch 版本号再加载
+	// widget.js?v=<指纹>），所以改 widget.js 时 URL 变、自然绕过长缓存，无需 purge。
+	widgetContent, err := os.ReadFile(filepath.Join(runtimeDir, "widget.js"))
+	if err != nil {
+		log.Fatal("Failed to read runtime/widget.js:", err)
+	}
+	sum := sha256.Sum256(widgetContent)
+	assetVersion = hex.EncodeToString(sum[:])[:12]
+	fmt.Println("asset version:", assetVersion)
 
 	// 4. 初始化数据库
 	initDB()
@@ -203,7 +216,13 @@ func handleRuntimeFile(filename string, contentType string) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "public, max-age=3600") // 编译后的 widget.js/loader.js 可缓存
+		if filename == "widget.js" {
+			// 版本化 URL 加载（?v=指纹），可长缓存 + immutable
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			// loader.js 内容稳定，短缓存便于万一需要修
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+		}
 		w.Write(content)
 	}
 }
@@ -230,7 +249,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		beforeID = b
 	}
 
-	query := "SELECT id, session_id, username, content, ua, referer, ip_hash, ip, created_at FROM messages "
+	query := "SELECT id, session_id, username, content, ua, referer, ip_hash, COALESCE(ip,'') AS ip, created_at FROM messages "
 	dbLock.Lock()
 	var rows *sql.Rows
 	var err error
@@ -374,7 +393,7 @@ func handlePoll(w http.ResponseWriter, r *http.Request) {
 
 func fetchMessagesAfter(afterID int) []Message {
 	dbLock.Lock()
-	rows, err := db.Query("SELECT id, session_id, username, content, ua, referer, ip_hash, ip, created_at FROM messages WHERE id > ? ORDER BY id ASC", afterID)
+	rows, err := db.Query("SELECT id, session_id, username, content, ua, referer, ip_hash, COALESCE(ip,'') AS ip, created_at FROM messages WHERE id > ? ORDER BY id ASC", afterID)
 	dbLock.Unlock()
 	if err != nil {
 		return []Message{}
@@ -395,6 +414,18 @@ func fetchMessagesAfter(afterID int) []Message {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// GET /api/version -> {"version":"<widget.js 指纹>"}
+// loader.js 每次运行都取它，用于加载 widget.js?v=<version>，绕过 CF 长缓存。
+func handleVersion(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	if r.Method == "OPTIONS" {
+		return
+	}
+	// 不缓存：确保拿到最新指纹
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, map[string]string{"version": assetVersion})
 }
 
 // --- 公告 ---
@@ -527,7 +558,7 @@ func handleAdminMessages(w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 	dbLock.Lock()
-	rows, err := db.Query("SELECT id, session_id, username, content, ua, referer, ip_hash, ip, created_at FROM messages ORDER BY id DESC LIMIT ?", limit)
+	rows, err := db.Query("SELECT id, session_id, username, content, ua, referer, ip_hash, COALESCE(ip,'') AS ip, created_at FROM messages ORDER BY id DESC LIMIT ?", limit)
 	dbLock.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -602,6 +633,7 @@ func main() {
 	http.HandleFunc("/api/messages", handleMessages)
 	http.HandleFunc("/api/send", handleSend)
 	http.HandleFunc("/api/poll", handlePoll)
+	http.HandleFunc("/api/version", handleVersion)
 
 	// 公告 + 后台
 	http.HandleFunc("/api/announcement", handleAnnouncement)

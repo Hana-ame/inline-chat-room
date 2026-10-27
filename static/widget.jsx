@@ -276,7 +276,7 @@ const MessageList = ({
               style={{
                 ...styles.msgBubble,
                 ...(isMe ? styles.myMsg : styles.otherMsg),
-                padding: isImage ? "4px" : undefined,
+                ...(isImage ? { padding: "4px" } : {}),
               }}
             >
               {isImage ? (
@@ -542,25 +542,22 @@ const ChatApp = () => {
 
   useEffect(() => {
     if (!isLoggedIn || !isOpen) return;
-    loadData({ limit: 10 }).then((msgs) => {
-      setMessages(msgs);
-      setTimeout(scrollToBottom, 100);
-    });
-    // 【长轮询】单连接循环代替 2s 短轮询：poll 挂起到有新消息或超时
     let stopped = false;
+    // 用闭包变量维护 lastId（不能从 setMessages 的 updater 里读——React 的
+    // updater 异步执行，lastId 会一直是 0，导致 poll 每次 after_id=0 拿全部历史、
+    // 立即返回、忙循环「不停加载」）
+    let lastId = 0;
+
     const pollLoop = async () => {
       while (!stopped) {
         try {
-          let lastId = 0;
-          setMessages((prev) => {
-            lastId = prev.length ? prev[prev.length - 1].id : 0;
-            return prev;
-          });
           const resp = await fetch(
             `${SERVER_URL}/api/poll?after_id=${lastId}&timeout=25`
           );
+          if (stopped) return;
           const newMsgs = await resp.json();
-          if (!stopped && Array.isArray(newMsgs) && newMsgs.length > 0) {
+          if (Array.isArray(newMsgs) && newMsgs.length > 0) {
+            lastId = newMsgs[newMsgs.length - 1].id;
             const el = document.getElementById("msg-end");
             const shouldScroll =
               el && el.getBoundingClientRect().top < window.innerHeight;
@@ -573,7 +570,20 @@ const ChatApp = () => {
         }
       }
     };
-    poller.current = pollLoop();
+
+    // 先拉最近 10 条，再用它们的最大 id 作为长轮询起点
+    loadData({ limit: 10 })
+      .then((msgs) => {
+        if (stopped) return;
+        setMessages(msgs);
+        lastId = msgs.length ? msgs[msgs.length - 1].id : 0;
+        setTimeout(scrollToBottom, 100);
+        pollLoop();
+      })
+      .catch(() => {
+        if (!stopped) pollLoop();
+      });
+
     return () => {
       stopped = true;
     };
