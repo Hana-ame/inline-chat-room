@@ -87,10 +87,11 @@ func initEnvironment() {
 	// 4. 初始化数据库
 	initDB()
 
-	// 5. Admin 配置：密码来自 env（无默认值，空则禁用后台管理），token 密钥随机生成
+	// 5. Admin 配置：密码来自 env，未设置时用默认密码 1234Abcd；token 密钥随机生成
 	adminPassword = os.Getenv("ADMIN_PASSWORD")
 	if adminPassword == "" {
-		log.Println("WARNING: ADMIN_PASSWORD not set -> admin panel disabled")
+		adminPassword = "1234Abcd"
+		log.Println("WARNING: ADMIN_PASSWORD not set -> using default password 1234Abcd (change it in docker-compose.yml)")
 	}
 	adminSecret = make([]byte, 32)
 	if _, err := rand.Read(adminSecret); err != nil {

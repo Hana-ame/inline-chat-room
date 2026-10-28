@@ -6,6 +6,6 @@ services:
     network_mode: host
     environment:
       - APP_HOST=https://inline-chat.moonchan.xyz
-      # - ADMIN_PASSWORD=change-me   # 后台管理密码（/ 登录用）；不设则后台禁用
+      - ADMIN_PASSWORD=1234Abcd   # 后台管理密码（/ 登录用）；不设则用默认 1234Abcd
     volumes:
       - ./data:/app/runtime
