@@ -368,7 +368,7 @@ const MessageInput = ({
         handleSend();
       }
     },
-    placeholder: "\u8F93\u5165\u6D88\u606F...",
+    placeholder: "\u8F93\u5165\u6D88\u606F...\uFF08\u53EF Ctrl+V \u8D34\u56FE\uFF09",
     disabled: isSending
   }), /*#__PURE__*/React.createElement("button", {
     onClick: handleSend,
@@ -667,6 +667,33 @@ const ChatApp = () => {
       setIsSending(false);
     }
   };
+
+  // 【Ctrl+V 粘贴图片】聊天窗打开时监听全局 paste：剪贴板里有图片就直接上传发送，
+  // 纯文字粘贴不拦截（保持默认行为）。
+  const uploadImageRef = useRef(handleUploadImage);
+  useEffect(() => {
+    uploadImageRef.current = handleUploadImage; // 每次 render 同步最新闭包（含 sessionID/username）
+  });
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPaste = e => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.kind === "file" && it.type && it.type.indexOf("image/") === 0) {
+          const file = it.getAsFile();
+          if (file) {
+            e.preventDefault();
+            if (!isSending) uploadImageRef.current(file);
+          }
+          break;
+        }
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [isOpen, isSending]);
   const getWindowStyle = () => {
     if (isMobile) return {
       ...styles.windowMobile,
