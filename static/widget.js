@@ -18,6 +18,24 @@ const generateUUID = () => {
   });
 };
 
+// 把纯文本里的 http(s) URL 渲染成可点击链接（公告栏用）
+const renderTextWithLinks = text => {
+  if (!text) return null;
+  return String(text).split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? /*#__PURE__*/React.createElement("a", {
+    key: i,
+    href: part,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      color: "#c2410c",
+      textDecoration: "underline",
+      wordBreak: "break-all"
+    }
+  }, part) : /*#__PURE__*/React.createElement("span", {
+    key: i
+  }, part));
+};
+
 // =============================================================================
 // 1. 样式定义
 // =============================================================================
@@ -791,7 +809,7 @@ const ChatApp = () => {
       flex: 1,
       wordBreak: "break-word"
     }
-  }, announcement), /*#__PURE__*/React.createElement("span", {
+  }, renderTextWithLinks(announcement)), /*#__PURE__*/React.createElement("span", {
     style: {
       cursor: "pointer",
       fontSize: "14px",
